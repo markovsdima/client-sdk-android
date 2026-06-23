@@ -39,6 +39,10 @@ def getSnapshotRepositoryUrl() {
         : "https://central.sonatype.com/repository/maven-snapshots/"
 }
 
+def getRepositoryName() {
+    return hasProperty('MAVEN_REPOSITORY_NAME') ? MAVEN_REPOSITORY_NAME : "maven"
+}
+
 def getRepositoryUsername() {
     return hasProperty('nexusUsername') ? nexusUsername : ""
 }
@@ -83,6 +87,7 @@ afterEvaluate { project ->
     publishing {
         repositories {
             maven {
+                name = getRepositoryName()
                 def releasesRepoUrl = getReleaseRepositoryUrl()
                 def snapshotsRepoUrl = getSnapshotRepositoryUrl()
                 url = isReleaseBuild() ? releasesRepoUrl : snapshotsRepoUrl

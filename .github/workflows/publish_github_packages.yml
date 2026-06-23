@@ -42,12 +42,13 @@ jobs:
           GITHUB_PACKAGES_USERNAME: ${{ github.actor }}
           GITHUB_PACKAGES_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ./gradlew \
-            :livekit-android-sdk:publishReleasePublicationToMavenRepository \
-            :livekit-android-camerax:publishReleasePublicationToMavenRepository \
-            :livekit-android-track-processors:publishReleasePublicationToMavenRepository \
+          ./gradlew --no-configuration-cache \
+            :livekit-android-sdk:publishReleasePublicationToGithubPackagesRepository \
+            :livekit-android-camerax:publishReleasePublicationToGithubPackagesRepository \
+            :livekit-android-track-processors:publishReleasePublicationToGithubPackagesRepository \
             -PRELEASE_REPOSITORY_URL="$GITHUB_PACKAGES_URL" \
             -PSNAPSHOT_REPOSITORY_URL="$GITHUB_PACKAGES_URL" \
+            -PMAVEN_REPOSITORY_NAME=githubPackages \
             -PnexusUsername="$GITHUB_PACKAGES_USERNAME" \
             -PnexusPassword="$GITHUB_PACKAGES_PASSWORD" \
             -PRELEASE_SIGNING_ENABLED=false \
