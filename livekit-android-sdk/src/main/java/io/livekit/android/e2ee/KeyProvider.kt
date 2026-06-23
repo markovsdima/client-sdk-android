@@ -29,9 +29,21 @@ internal class KeyInfo(var participantId: String, var keyIndex: Int, var key: St
 
 interface KeyProvider {
     fun setSharedKey(key: String, keyIndex: Int? = 0): Boolean
+
+    /**
+     * Set raw shared key material without applying string encoding.
+     */
+    fun setSharedKey(key: ByteArray, keyIndex: Int? = 0): Boolean
+
     fun ratchetSharedKey(keyIndex: Int? = 0): ByteArray
     fun exportSharedKey(keyIndex: Int? = 0): ByteArray
     fun setKey(key: String, participantId: String?, keyIndex: Int? = 0)
+
+    /**
+     * Set raw key material for a participant without applying string encoding.
+     */
+    fun setKey(key: ByteArray, participantId: String?, keyIndex: Int? = 0)
+
     fun ratchetKey(participantId: String, keyIndex: Int? = 0): ByteArray
     fun exportKey(participantId: String, keyIndex: Int? = 0): ByteArray
     fun setSifTrailer(trailer: ByteArray)
@@ -42,7 +54,8 @@ interface KeyProvider {
     var enableSharedKey: Boolean
 }
 
-class BaseKeyProvider(
+@Suppress("LongParameterList")
+class BaseKeyProvider private constructor(
     ratchetSalt: String = defaultRatchetSalt,
     uncryptedMagicBytes: String = defaultMagicBytes,
     ratchetWindowSize: Int = defaultRatchetWindowSize,
@@ -51,23 +64,65 @@ class BaseKeyProvider(
     keyRingSize: Int = defaultKeyRingSize,
     discardFrameWhenCryptorNotReady: Boolean = defaultDiscardFrameWhenCryptorNotReady,
     keyDerivationAlgorithm: FrameCryptorKeyDerivationAlgorithm = defaultKeyDerivationAlgorithm,
+    rtcKeyProvider: FrameCryptorKeyProvider? = null,
 ) : KeyProvider {
+
+    constructor(
+        ratchetSalt: String = defaultRatchetSalt,
+        uncryptedMagicBytes: String = defaultMagicBytes,
+        ratchetWindowSize: Int = defaultRatchetWindowSize,
+        enableSharedKey: Boolean = true,
+        failureTolerance: Int = defaultFailureTolerance,
+        keyRingSize: Int = defaultKeyRingSize,
+        discardFrameWhenCryptorNotReady: Boolean = defaultDiscardFrameWhenCryptorNotReady,
+        keyDerivationAlgorithm: FrameCryptorKeyDerivationAlgorithm = defaultKeyDerivationAlgorithm,
+    ) : this(
+        ratchetSalt = ratchetSalt,
+        uncryptedMagicBytes = uncryptedMagicBytes,
+        ratchetWindowSize = ratchetWindowSize,
+        enableSharedKey = enableSharedKey,
+        failureTolerance = failureTolerance,
+        keyRingSize = keyRingSize,
+        discardFrameWhenCryptorNotReady = discardFrameWhenCryptorNotReady,
+        keyDerivationAlgorithm = keyDerivationAlgorithm,
+        rtcKeyProvider = null,
+    )
+
+    internal constructor(
+        rtcKeyProvider: FrameCryptorKeyProvider,
+        enableSharedKey: Boolean = true,
+    ) : this(
+        ratchetSalt = defaultRatchetSalt,
+        uncryptedMagicBytes = defaultMagicBytes,
+        ratchetWindowSize = defaultRatchetWindowSize,
+        enableSharedKey = enableSharedKey,
+        failureTolerance = defaultFailureTolerance,
+        keyRingSize = defaultKeyRingSize,
+        discardFrameWhenCryptorNotReady = defaultDiscardFrameWhenCryptorNotReady,
+        keyDerivationAlgorithm = defaultKeyDerivationAlgorithm,
+        rtcKeyProvider = rtcKeyProvider,
+    )
 
     private val latestSetIndex = mutableMapOf<String, Int>()
 
-    override val rtcKeyProvider: FrameCryptorKeyProvider = FrameCryptorFactory.createFrameCryptorKeyProvider(
-        enableSharedKey,
-        ratchetSalt.toByteArray(),
-        ratchetWindowSize,
-        uncryptedMagicBytes.toByteArray(),
-        failureTolerance,
-        keyRingSize,
-        discardFrameWhenCryptorNotReady,
-        keyDerivationAlgorithm,
-    )
+    override val rtcKeyProvider: FrameCryptorKeyProvider = rtcKeyProvider
+        ?: FrameCryptorFactory.createFrameCryptorKeyProvider(
+            enableSharedKey,
+            ratchetSalt.toByteArray(),
+            ratchetWindowSize,
+            uncryptedMagicBytes.toByteArray(),
+            failureTolerance,
+            keyRingSize,
+            discardFrameWhenCryptorNotReady,
+            keyDerivationAlgorithm,
+        )
 
     override fun setSharedKey(key: String, keyIndex: Int?): Boolean {
-        return rtcKeyProvider.setSharedKey(keyIndex ?: 0, key.toByteArray())
+        return setSharedKey(key.toByteArray(Charsets.UTF_8), keyIndex)
+    }
+
+    override fun setSharedKey(key: ByteArray, keyIndex: Int?): Boolean {
+        return rtcKeyProvider.setSharedKey(keyIndex ?: 0, key)
     }
 
     override fun ratchetSharedKey(keyIndex: Int?): ByteArray {
@@ -85,6 +140,13 @@ class BaseKeyProvider(
      * @param keyIndex
      */
     override fun setKey(key: String, participantId: String?, keyIndex: Int?) {
+        setKey(key.toByteArray(Charsets.UTF_8), participantId, keyIndex)
+    }
+
+    /**
+     * Set raw key material for a participant without applying string encoding.
+     */
+    override fun setKey(key: ByteArray, participantId: String?, keyIndex: Int?) {
         if (enableSharedKey) {
             return
         }
@@ -94,10 +156,10 @@ class BaseKeyProvider(
             return
         }
 
-        val keyIndex = keyIndex ?: 0
-        latestSetIndex[participantId] = keyIndex
+        val targetKeyIndex = keyIndex ?: 0
+        latestSetIndex[participantId] = targetKeyIndex
 
-        rtcKeyProvider.setKey(participantId, keyIndex, key.toByteArray())
+        rtcKeyProvider.setKey(participantId, targetKeyIndex, key)
     }
 
     override fun ratchetKey(participantId: String, keyIndex: Int?): ByteArray {
