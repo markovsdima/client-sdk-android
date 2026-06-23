@@ -25,6 +25,10 @@ class NoopKeyProvider(override val rtcKeyProvider: FrameCryptorKeyProvider = moc
         return true
     }
 
+    override fun setSharedKey(key: ByteArray, keyIndex: Int?): Boolean {
+        return true
+    }
+
     override fun ratchetSharedKey(keyIndex: Int?): ByteArray {
         return ByteArray(0)
     }
@@ -34,6 +38,9 @@ class NoopKeyProvider(override val rtcKeyProvider: FrameCryptorKeyProvider = moc
     }
 
     override fun setKey(key: String, participantId: String?, keyIndex: Int?) {
+    }
+
+    override fun setKey(key: ByteArray, participantId: String?, keyIndex: Int?) {
     }
 
     override fun ratchetKey(participantId: String, keyIndex: Int?): ByteArray {
