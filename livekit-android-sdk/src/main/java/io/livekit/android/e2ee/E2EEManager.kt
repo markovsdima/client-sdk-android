@@ -16,6 +16,7 @@
 
 package io.livekit.android.e2ee
 
+import android.util.Log
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -40,6 +41,8 @@ import livekit.org.webrtc.PeerConnectionFactory
 import livekit.org.webrtc.RtpReceiver
 import livekit.org.webrtc.RtpSender
 
+private const val ZYNA_E2EE_DIAGNOSTIC_TAG = "ZynaLiveKitE2EE"
+
 class E2EEManager
 @AssistedInject
 constructor(
@@ -48,17 +51,26 @@ constructor(
     dataPacketCryptorManagerFactory: DataPacketCryptorManager.Factory,
 ) {
     private var room: Room? = null
+    private val frameCryptorsLock = Any()
     private val frameCryptors = mutableMapOf<Pair<String, Participant.Identity>, FrameCryptor>()
     private var algorithm: FrameCryptorAlgorithm = FrameCryptorAlgorithm.AES_GCM
     private lateinit var emitEvent: (roomEvent: RoomEvent) -> Unit?
 
     internal var dataPacketCryptorManager: DataPacketCryptorManager = dataPacketCryptorManagerFactory.create(keyProvider)
 
+    init {
+        (keyProvider as? BaseKeyProvider)?.participantKeyIndexListener = { participantId, keyIndex ->
+            updateParticipantFrameCryptorKeyIndex(participantId, keyIndex)
+        }
+    }
+
     var enabled: Boolean = false
         set(value) {
             field = value
-            for (item in frameCryptors.entries) {
-                val frameCryptor = item.value
+            val currentFrameCryptors = synchronized(frameCryptorsLock) {
+                frameCryptors.values.toList()
+            }
+            currentFrameCryptors.forEach { frameCryptor ->
                 frameCryptor.isEnabled = enabled
             }
         }
@@ -129,11 +141,12 @@ constructor(
     fun removeSubscribedTrack(track: Track, publication: TrackPublication, participant: RemoteParticipant, room: Room) {
         val trackId = publication.sid
         val participantId = participant.identity
-        val frameCryptor = frameCryptors.get(trackId to participantId)
+        val frameCryptor = synchronized(frameCryptorsLock) {
+            frameCryptors.remove(trackId to participantId)
+        }
         if (frameCryptor != null) {
             frameCryptor.isEnabled = false
             frameCryptor.dispose()
-            frameCryptors.remove(trackId to participantId)
         }
     }
 
@@ -164,11 +177,12 @@ constructor(
     fun removePublishedTrack(track: Track, publication: TrackPublication, participant: LocalParticipant, room: Room) {
         val trackId = publication.sid
         val participantId = participant.identity
-        val frameCryptor = frameCryptors.get(trackId to participantId)
+        val frameCryptor = synchronized(frameCryptorsLock) {
+            frameCryptors.remove(trackId to participantId)
+        }
         if (frameCryptor != null) {
             frameCryptor.isEnabled = false
             frameCryptor.dispose()
-            frameCryptors.remove(trackId to participantId)
         }
     }
 
@@ -194,9 +208,17 @@ constructor(
             keyProvider.rtcKeyProvider,
         )
 
-        frameCryptors[trackId to participantId] = frameCryptor
+        synchronized(frameCryptorsLock) {
+            frameCryptors[trackId to participantId] = frameCryptor
+        }
         frameCryptor.isEnabled = enabled
-        frameCryptor.keyIndex = keyProvider.getLatestKeyIndex(participantId.value)
+        val latestKeyIndex = keyProvider.getLatestKeyIndex(participantId.value)
+        frameCryptor.keyIndex = latestKeyIndex
+        Log.d(
+            ZYNA_E2EE_DIAGNOSTIC_TAG,
+            "addRtpSender participantId=${participantId.value} trackId=$trackId kind=$kind " +
+                "latestKeyIndex=$latestKeyIndex frameCryptorKeyIndex=${frameCryptor.keyIndex} enabled=$enabled",
+        )
         return frameCryptor
     }
 
@@ -209,9 +231,17 @@ constructor(
             keyProvider.rtcKeyProvider,
         )
 
-        frameCryptors[trackId to participantId] = frameCryptor
+        synchronized(frameCryptorsLock) {
+            frameCryptors[trackId to participantId] = frameCryptor
+        }
         frameCryptor.isEnabled = enabled
-        frameCryptor.keyIndex = keyProvider.getLatestKeyIndex(participantId.value)
+        val latestKeyIndex = keyProvider.getLatestKeyIndex(participantId.value)
+        frameCryptor.keyIndex = latestKeyIndex
+        Log.d(
+            ZYNA_E2EE_DIAGNOSTIC_TAG,
+            "addRtpReceiver participantId=${participantId.value} trackId=$trackId kind=$kind " +
+                "latestKeyIndex=$latestKeyIndex frameCryptorKeyIndex=${frameCryptor.keyIndex} enabled=$enabled",
+        )
         return frameCryptor
     }
 
@@ -232,13 +262,18 @@ constructor(
     }
 
     internal fun cleanup() {
-        for (frameCryptor in frameCryptors.values) {
+        val currentFrameCryptors = synchronized(frameCryptorsLock) {
+            frameCryptors.values.toList().also {
+                frameCryptors.clear()
+            }
+        }
+        for (frameCryptor in currentFrameCryptors) {
             frameCryptor.dispose()
         }
-        frameCryptors.clear()
     }
 
     internal fun dispose() {
+        (keyProvider as? BaseKeyProvider)?.participantKeyIndexListener = null
         dataPacketCryptorManager.dispose()
     }
 
@@ -263,5 +298,21 @@ constructor(
         fun create(
             @Assisted keyProvider: KeyProvider,
         ): E2EEManager
+    }
+
+    private fun updateParticipantFrameCryptorKeyIndex(participantId: String, keyIndex: Int) {
+        val targetFrameCryptors = synchronized(frameCryptorsLock) {
+            frameCryptors.entries
+                .filter { (frameCryptorId, _) -> frameCryptorId.second.value == participantId }
+                .map { (frameCryptorId, frameCryptor) -> frameCryptorId.first to frameCryptor }
+        }
+        targetFrameCryptors.forEach { (_, frameCryptor) ->
+            frameCryptor.keyIndex = keyIndex
+        }
+        Log.d(
+            ZYNA_E2EE_DIAGNOSTIC_TAG,
+            "updateFrameCryptorKeyIndex participantId=$participantId keyIndex=$keyIndex " +
+                "updated=${targetFrameCryptors.size} tracks=${targetFrameCryptors.joinToString { it.first }}",
+        )
     }
 }

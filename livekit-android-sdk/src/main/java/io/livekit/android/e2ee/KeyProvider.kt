@@ -16,10 +16,13 @@
 
 package io.livekit.android.e2ee
 
+import android.util.Log
 import io.livekit.android.util.LKLog
 import livekit.org.webrtc.FrameCryptorFactory
 import livekit.org.webrtc.FrameCryptorKeyDerivationAlgorithm
 import livekit.org.webrtc.FrameCryptorKeyProvider
+
+private const val ZYNA_E2EE_DIAGNOSTIC_TAG = "ZynaLiveKitE2EE"
 
 internal class KeyInfo(var participantId: String, var keyIndex: Int, var key: String) {
     override fun toString(): String {
@@ -105,6 +108,9 @@ class BaseKeyProvider private constructor(
 
     private val latestSetIndex = mutableMapOf<String, Int>()
 
+    @Volatile
+    internal var participantKeyIndexListener: ((participantId: String, keyIndex: Int) -> Unit)? = null
+
     override val rtcKeyProvider: FrameCryptorKeyProvider = rtcKeyProvider
         ?: FrameCryptorFactory.createFrameCryptorKeyProvider(
             enableSharedKey,
@@ -122,7 +128,16 @@ class BaseKeyProvider private constructor(
     }
 
     override fun setSharedKey(key: ByteArray, keyIndex: Int?): Boolean {
-        return rtcKeyProvider.setSharedKey(keyIndex ?: 0, key)
+        val targetKeyIndex = keyIndex ?: 0
+        val result = rtcKeyProvider.setSharedKey(targetKeyIndex, key)
+        val exportedBytes = runCatching {
+            rtcKeyProvider.exportSharedKey(targetKeyIndex).size
+        }.getOrNull()
+        Log.d(
+            ZYNA_E2EE_DIAGNOSTIC_TAG,
+            "setSharedKey keyIndex=$targetKeyIndex bytes=${key.size} exportedBytes=$exportedBytes result=$result",
+        )
+        return result
     }
 
     override fun ratchetSharedKey(keyIndex: Int?): ByteArray {
@@ -148,6 +163,10 @@ class BaseKeyProvider private constructor(
      */
     override fun setKey(key: ByteArray, participantId: String?, keyIndex: Int?) {
         if (enableSharedKey) {
+            Log.d(
+                ZYNA_E2EE_DIAGNOSTIC_TAG,
+                "setKey skipped sharedKeyMode participantId=$participantId keyIndex=${keyIndex ?: 0} bytes=${key.size}",
+            )
             return
         }
 
@@ -160,6 +179,14 @@ class BaseKeyProvider private constructor(
         latestSetIndex[participantId] = targetKeyIndex
 
         rtcKeyProvider.setKey(participantId, targetKeyIndex, key)
+        val exportedBytes = runCatching {
+            rtcKeyProvider.exportKey(participantId, targetKeyIndex).size
+        }.getOrNull()
+        Log.d(
+            ZYNA_E2EE_DIAGNOSTIC_TAG,
+            "setKey participantId=$participantId keyIndex=$targetKeyIndex bytes=${key.size} exportedBytes=$exportedBytes",
+        )
+        participantKeyIndexListener?.invoke(participantId, targetKeyIndex)
     }
 
     override fun ratchetKey(participantId: String, keyIndex: Int?): ByteArray {
@@ -175,6 +202,11 @@ class BaseKeyProvider private constructor(
     }
 
     override fun getLatestKeyIndex(participantId: String): Int {
-        return latestSetIndex[participantId] ?: 0
+        val latestKeyIndex = latestSetIndex[participantId] ?: 0
+        Log.d(
+            ZYNA_E2EE_DIAGNOSTIC_TAG,
+            "getLatestKeyIndex participantId=$participantId latestKeyIndex=$latestKeyIndex",
+        )
+        return latestKeyIndex
     }
 }
